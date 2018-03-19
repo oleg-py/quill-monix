@@ -8,6 +8,7 @@ Let's bring the two closer together.
 This library is in a very early stage of development:
 
 * Only JDBC-based H2 support
+* No tests at all.
 
 Snapshot version is available, courtesy of [JitPack](https://jitpack.io)
 
