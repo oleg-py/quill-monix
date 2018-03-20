@@ -34,8 +34,8 @@ val users: Task[List[User]] = ctx.run(ctx.query[User].take(5))
 
 import cats.syntax.functor._ // useful for discarding results
 
-val deleteJon = ctx.run(ctx.query[User].filter(_.name == "Jon").delete.void
-val delYounglings = ctx.run(ctx.query[User].filter(_.age <= 15).delete.void
+val deleteJon: Task[Unit] = ctx.run(ctx.query[User].filter(_.name == "Jon").delete).void
+val delYounglings = ctx.run(ctx.query[User].filter(_.age <= 15).delete).void
 
 // Since Tasks are lazy, transactions can be added on top of existing ones
 
@@ -46,7 +46,7 @@ val deleteJonAndGetRest = ctx.transaction {
   } yield rest
 }
 
-// Task-based context rely on `TaskLocal`, so local context propagation
+// Task-based context relies on `TaskLocal`, so local context propagation
 // MUST be enabled
 
 implicit val taskOptions = Task.Options.default
