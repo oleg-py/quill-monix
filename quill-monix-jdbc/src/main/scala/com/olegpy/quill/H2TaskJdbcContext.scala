@@ -6,7 +6,7 @@ import com.olegpy.quill.jdbc.{TaskJdbcContext, UUIDStringEncoding}
 import java.io.Closeable
 import javax.sql.DataSource
 import com.typesafe.config.Config
-import io.getquill.{H2Dialect, JdbcContextConfig, NamingStrategy}
+import io.getquill.{H2Dialect, NamingStrategy}
 import io.getquill.util.LoadConfig
 import monix.execution.Scheduler
 

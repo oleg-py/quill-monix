@@ -10,6 +10,7 @@ lazy val `quill-monix-jdbc` = project
     fork in Test := true,
     libraryDependencies ++= Seq(
       "io.monix" %% "monix-eval" % "3.0.0-RC1",
-      "io.getquill" %% "quill-jdbc" % "2.3.3"
+      "com.zaxxer" % "HikariCP" % "2.7.4",
+      "io.getquill" %% "quill-sql" % "2.3.3"
     )
   )
