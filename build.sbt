@@ -2,6 +2,7 @@ inThisBuild(Seq(
   version := "0.1",
   scalaVersion := "2.12.4",
   crossScalaVersions := Seq("2.11.12", "2.12.4"),
+  scalacOptions += "-language:higherKinds"
 ))
 
 lazy val `quill-monix-jdbc` = project

@@ -21,15 +21,11 @@ import javax.sql.DataSource
 /**
   * Quill context that wraps all JDBC calls in `monix.eval.Task`.
   *
-  * @param scheduler - Monix scheduler - used ONLY for query probing
-  *                  and unsafely creating a TaskLocal with current connection
   */
 abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
-  dataSource: DataSource with Closeable
-)(
-  implicit scheduler: Scheduler
-)
-  extends Context[Dialect, Naming]
+  dataSource: DataSource with Closeable,
+  currentConnection: TaskLocal[Option[Connection]]
+) extends Context[Dialect, Naming]
     with  SqlContext[Dialect, Naming]
     with  Encoders
     with  Decoders
@@ -44,10 +40,7 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
     */
   protected def delay[A](thunk: => A): Task[A] = Task.eval(thunk)
 
-  private[this] val currentConnection: TaskLocal[Option[Connection]] =
-    TaskLocal(None: Option[Connection]).runSyncUnsafe(Duration.Inf)
-
-  private[this] val logger = ContextLogger(classOf[TaskJdbcContext[_, _]])
+  protected val logger = ContextLogger(classOf[TaskJdbcContext[_, _]])
 
   override type PrepareRow = PreparedStatement
   override type ResultRow = ResultSet
@@ -77,10 +70,14 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
 
   override def close(): Unit = dataSource.close()
 
-  override def probe(sql: String): Try[_] =
-    withConnection(c => Task.eval(c.createStatement.execute(sql)))
-      .materialize
-      .runSyncUnsafe(Duration.Inf)
+  override def probe(sql: String): Try[_] = Try {
+    val c = dataSource.getConnection
+    try {
+      c.createStatement().execute(sql)
+    } finally {
+      c.close()
+    }
+  }
 
   def transaction[A](f: Task[A]): Task[A] =
     OptionT(currentConnection.read).semiflatMap(_ => f).getOrElseF {
