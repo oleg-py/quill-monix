@@ -1,9 +1,9 @@
 package com.olegpy.quill.jdbc
 
 import scala.collection.mutable.ListBuffer
-import scala.concurrent.duration.Duration
 import scala.util.Try
 
+import cats.Eval
 import cats.data.OptionT
 import io.getquill.NamingStrategy
 import io.getquill.context.Context
@@ -11,7 +11,6 @@ import io.getquill.context.sql.SqlContext
 import io.getquill.context.sql.idiom.SqlIdiom
 import io.getquill.util.ContextLogger
 import monix.eval.{Task, TaskLocal}
-import monix.execution.Scheduler
 
 import java.io.Closeable
 import java.sql.{Array => _, _}
@@ -24,22 +23,13 @@ import javax.sql.DataSource
   */
 abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource with Closeable,
-  currentConnection: TaskLocal[Option[Connection]]
+  currentConnection: TaskLocal[Option[Connection]],
+  runner: Runner
 ) extends Context[Dialect, Naming]
     with  SqlContext[Dialect, Naming]
     with  Encoders
     with  Decoders
 {
-  /**
-    * This function is used for wrapping JDBC calls into a `Task`
-    *
-    * Can be used to provide custom scheduler (using `shift`/`executeOn`),
-    * forcing async boundaries and/or using `blocking`
-    *
-    * By default this uses plain simple `Task.eval`
-    */
-  protected def delay[A](thunk: => A): Task[A] = Task.eval(thunk)
-
   protected val logger = ContextLogger(classOf[TaskJdbcContext[_, _]])
 
   override type PrepareRow = PreparedStatement
@@ -54,6 +44,7 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   override type RunBatchActionReturningResult[T] = List[T]
 
   private[this] val closeConn = (c: Connection) => Task.eval(c.close())
+  private[this] val withLCP = (_: Task.Options).enableLocalContextPropagation
 
   protected def withConnection[A](f: Connection => Task[A]): Task[A] =
     OptionT(currentConnection.read).semiflatMap(f).getOrElseF {
@@ -63,10 +54,10 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
           Task.pure(conn).bracket(f)(closeConn)
         }
       } yield res
-    }
+    }.executeWithOptions(withLCP)
 
   private[this] def withConnectionDelay[A](f: Connection => A): Task[A] =
-    withConnection(conn => delay(f(conn)))
+    withConnection(conn => runner(Eval.always(f(conn))))
 
   override def close(): Unit = dataSource.close()
 
@@ -91,7 +82,7 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
             }
             .doOnFinish(_ => Task.eval(conn.setAutoCommit(wasAutoCommit)))
         } yield result
-      }
+      }.executeWithOptions(withLCP)
     }
 
 
