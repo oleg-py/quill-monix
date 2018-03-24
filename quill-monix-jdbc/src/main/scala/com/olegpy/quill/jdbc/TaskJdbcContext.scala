@@ -47,14 +47,15 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private[this] val withLCP = (_: Task.Options).enableLocalContextPropagation
 
   protected def withConnection[A](f: Connection => Task[A]): Task[A] =
-    OptionT(currentConnection.read).semiflatMap(f).getOrElseF {
-      for {
-        conn <- Task.eval(dataSource.getConnection)
-        res  <- currentConnection.bind(Some(conn)) {
-          Task.pure(conn).bracket(f)(closeConn)
-        }
-      } yield res
-    }.executeWithOptions(withLCP)
+    OptionT(currentConnection.read).filterNot(_.isClosed).semiflatMap(f)
+      .getOrElseF {
+        for {
+          conn <- Task.eval(dataSource.getConnection)
+          res  <- currentConnection.bind(Some(conn)) {
+            Task.pure(conn).bracket(f)(closeConn)
+          }
+        } yield res
+      }
 
   private[this] def withConnectionDelay[A](f: Connection => A): Task[A] =
     withConnection(conn => runner(Eval.always(f(conn))))
