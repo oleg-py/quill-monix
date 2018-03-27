@@ -47,18 +47,22 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private[this] val withLCP = (_: Task.Options).enableLocalContextPropagation
 
   protected def withConnection[A](f: Connection => Task[A]): Task[A] =
-    OptionT(currentConnection.read).filterNot(_.isClosed).semiflatMap(f)
-      .getOrElseF {
-        for {
-          conn <- Task.eval(dataSource.getConnection)
-          res  <- currentConnection.bind(Some(conn)) {
-            Task.pure(conn).bracket(f)(closeConn)
-          }
-        } yield res
-      }
+    currentConnection.read.flatMap {
+      case Some(conn) if !conn.isClosed => f(conn) // temp. workaround for monix#624
+      case _ =>
+        val task =
+          for {
+            conn <- Task.eval(dataSource.getConnection)
+            res  <- currentConnection.bind(Some(conn)) {
+              Task.pure(conn).bracket(f)(closeConn)
+            }
+          } yield res
+
+        task.executeWithOptions(withLCP)
+    }
 
   private[this] def withConnectionDelay[A](f: Connection => A): Task[A] =
-    withConnection(conn => runner(Eval.always(f(conn))))
+    withConnection(conn => runner(f(conn)))
 
   override def close(): Unit = dataSource.close()
 
@@ -72,18 +76,22 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   }
 
   def transaction[A](f: Task[A]): Task[A] =
-    OptionT(currentConnection.read).semiflatMap(_ => f).getOrElseF {
-      withConnection { conn =>
-        for {
-          wasAutoCommit <- Task.eval(conn.getAutoCommit)
-          result <- Task.eval(conn.setAutoCommit(false))
-            .bracketE(_ => f) {
-              case (_, Right(_)) => Task.eval(conn.commit())
-              case (_, Left(_)) => Task.eval(conn.rollback())
-            }
-            .doOnFinish(_ => Task.eval(conn.setAutoCommit(wasAutoCommit)))
-        } yield result
-      }.executeWithOptions(withLCP)
+    currentConnection.read.flatMap {
+      case Some(_) => f
+      case None =>
+        withConnection { conn =>
+          for {
+            wasAutoCommit <- Task.eval(conn.getAutoCommit)
+            result <- Task.eval(conn.setAutoCommit(false))
+              .bracketE(_ => f) {
+                case (_, Right(_)) => Task.eval(conn.commit())
+                case (_, Left(_))  => Task.eval(conn.rollback())
+              }
+              .bracket(Task.pure) { _ =>
+                Task.eval(conn.setAutoCommit(wasAutoCommit))
+              }
+          } yield result
+        }
     }
 
 
