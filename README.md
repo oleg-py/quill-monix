@@ -1,4 +1,10 @@
 # quill-monix
+
+## EOL
+This project is not relevant anymore. Since version 3, quill has monix support in a separate `quill-monix` module.
+
+---
+
 [Quill](getquill/quill) is great. [Monix](monix/monix) is great.
 
 Let's bring the two closer together.
