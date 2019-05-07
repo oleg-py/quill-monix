@@ -23,13 +23,22 @@ import javax.sql.DataSource
   */
 abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   dataSource: DataSource with Closeable,
-  currentConnection: TaskLocal[Option[Connection]],
-  runner: Runner
+  currentConnection: TaskLocal[Option[Connection]]
 ) extends Context[Dialect, Naming]
     with  SqlContext[Dialect, Naming]
     with  Encoders
     with  Decoders
 {
+  /**
+    * This function is used for wrapping JDBC calls into a `Task`
+    *
+    * Can be used to provide custom scheduler (using `shift`/`executeOn`),
+    * forcing async boundaries and/or using `blocking`
+    *
+    * By default this uses plain simple `Task.eval`
+    */
+  protected def delay[A](thunk: => A): Task[A] = Task.eval(thunk)
+
   protected val logger = ContextLogger(classOf[TaskJdbcContext[_, _]])
 
   override type PrepareRow = PreparedStatement
@@ -47,22 +56,17 @@ abstract class TaskJdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](
   private[this] val withLCP = (_: Task.Options).enableLocalContextPropagation
 
   protected def withConnection[A](f: Connection => Task[A]): Task[A] =
-    currentConnection.read.flatMap {
-      case Some(conn) if !conn.isClosed => f(conn) // temp. workaround for monix#624
-      case _ =>
-        val task =
-          for {
-            conn <- Task.eval(dataSource.getConnection)
-            res  <- currentConnection.bind(Some(conn)) {
-              Task.pure(conn).bracket(f)(closeConn)
-            }
-          } yield res
-
-        task.executeWithOptions(withLCP)
-    }
+    OptionT(currentConnection.read).semiflatMap(f).getOrElseF {
+      for {
+        conn <- Task.eval(dataSource.getConnection)
+        res  <- currentConnection.bind(Some(conn)) {
+          Task.pure(conn).bracket(f)(closeConn)
+        }
+      } yield res
+    }.executeWithOptions(withLCP)
 
   private[this] def withConnectionDelay[A](f: Connection => A): Task[A] =
-    withConnection(conn => runner(f(conn)))
+    withConnection(conn => delay(f(conn)))
 
   override def close(): Unit = dataSource.close()
 
